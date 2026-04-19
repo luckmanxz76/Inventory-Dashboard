@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SWAPANTAU - Inventory Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f4f6f9; color: #1a1a2e; font-size: 14px; }
+
+  header {
+    background: #1a1a2e;
+    color: #fff;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
+  header span { font-size: 12px; opacity: 0.6; }
+
+  .container { padding: 20px 24px; max-width: 1200px; margin: 0 auto; }
+
+  /* KPI CARDS */
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .kpi-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 14px 16px;
+    border-left: 4px solid #ccc;
+  }
+  .kpi-card.blue   { border-color: #378ADD; }
+  .kpi-card.green  { border-color: #639922; }
+  .kpi-card.amber  { border-color: #EF9F27; }
+  .kpi-card.red    { border-color: #E24B4A; }
+  .kpi-card .label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .kpi-card .value { font-size: 26px; font-weight: 700; color: #1a1a2e; }
+  .kpi-card .sub   { font-size: 11px; color: #aaa; margin-top: 2px; }
+
+  /* CHARTS ROW */
+  .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  @media (max-width: 700px) { .charts-grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  }
+  .card-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #555;
+    margin-bottom: 14px;
+  }
+
+  /* STATUS BADGE */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge.ok     { background: #EAF3DE; color: #3B6D11; }
+  .badge.low    { background: #FAEEDA; color: #854F0B; }
+  .badge.empty  { background: #FCEBEB; color: #A32D2D; }
+
+  /* TABLE */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead tr { background: #f8f8f8; }
+  th { padding: 8px 10px; text-align: left; font-weight: 600; color: #555; border-bottom: 1px solid #eee; white-space: nowrap; }
+  td { padding: 8px 10px; border-bottom: 1px solid #f0f0f0; color: #333; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fafafa; }
+
+  /* STOCK BAR */
+  .stock-bar-wrap { background: #eee; border-radius: 4px; height: 6px; width: 100px; overflow: hidden; }
+  .stock-bar { height: 100%; border-radius: 4px; background: #639922; }
+  .stock-bar.low   { background: #EF9F27; }
+  .stock-bar.empty { background: #E24B4A; }
+
+  /* TRANSACTIONS */
+  .tx-list { display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow-y: auto; }
+  .tx-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: #fafafa;
+    border: 1px solid #f0f0f0;
+  }
+  .tx-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .tx-dot.in  { background: #639922; }
+  .tx-dot.out { background: #E24B4A; }
+  .tx-info { flex: 1; }
+  .tx-info .tx-name { font-weight: 500; font-size: 13px; }
+  .tx-info .tx-meta { font-size: 11px; color: #999; }
+  .tx-qty { font-size: 13px; font-weight: 600; }
+  .tx-qty.in  { color: #639922; }
+  .tx-qty.out { color: #E24B4A; }
+
+  .alert-row { background: #FAEEDA; }
+  .alert-row td { color: #854F0B; }
+
+  .loading { text-align: center; padding: 40px; color: #aaa; font-size: 13px; }
+  .error   { text-align: center; padding: 20px; color: #E24B4A; font-size: 13px; }
+
+  .refresh-btn {
+    background: none;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    color: #555;
+  }
+  .refresh-btn:hover { background: #f0f0f0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SWAPANTAU AIR &mdash; Inventory Sparepart</h1>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <span id="last-update">Memuat...</span>
+    <button class="refresh-btn" onclick="loadAll()">&#x21BA; Refresh</button>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- KPI CARDS -->
+  <div class="kpi-grid">
+    <div class="kpi-card blue">
+      <div class="label">Total Item</div>
+      <div class="value" id="kpi-total">-</div>
+      <div class="sub">jenis sparepart</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="label">Nilai Stok</div>
+      <div class="value" id="kpi-value">-</div>
+      <div class="sub">total estimasi</div>
+    </div>
+    <div class="kpi-card amber">
+      <div class="label">Stok Rendah</div>
+      <div class="value" id="kpi-low">-</div>
+      <div class="sub">perlu reorder</div>
+    </div>
+    <div class="kpi-card red">
+      <div class="label">Stok Habis</div>
+      <div class="value" id="kpi-empty">-</div>
+      <div class="sub">segera pesan</div>
+    </div>
+  </div>
+
+  <!-- CHARTS -->
+  <div class="charts-grid">
+    <div class="card">
+      <div class="card-title">Stok per Kategori</div>
+      <div style="position:relative;height:240px;">
+        <canvas id="chartKategori" role="img" aria-label="Bar chart stok per kategori sparepart"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Transaksi 7 Hari Terakhir</div>
+      <div style="position:relative;height:240px;">
+        <canvas id="chartTrend" role="img" aria-label="Line chart transaksi masuk dan keluar 7 hari terakhir"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN GRID: TABLE + TRANSACTIONS -->
+  <div class="charts-grid">
+    <!-- CURRENT STOCK TABLE -->
+    <div class="card" style="grid-column: span 1;">
+      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Status Stok Saat Ini</span>
+        <span id="alert-badge" style="display:none;" class="badge empty">&#9888; Ada Stok Kritis</span>
+      </div>
+      <div class="table-wrap" id="stock-table-wrap">
+        <div class="loading">Memuat data stok...</div>
+      </div>
+    </div>
+
+    <!-- RECENT TRANSACTIONS -->
+    <div class="card">
+      <div class="card-title">Transaksi Terbaru</div>
+      <div class="tx-list" id="tx-list">
+        <div class="loading">Memuat transaksi...</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+var chartKat, chartTrend;
+
+function loadAll() {
+  document.getElementById("last-update").textContent = "Memperbarui...";
+  google.script.run
+    .withSuccessHandler(function(json) {
+      var d = JSON.parse(json);
+      renderKPI(d.current, d.master);
+      renderStockTable(d.current);
+      renderTransactions(d.stockIn, d.stockOut);
+      renderChartKategori(d.current);
+      renderChartTrend(d.stockIn, d.stockOut);
+      var now = new Date();
+      document.getElementById("last-update").textContent =
+        "Update: " + now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+    })
+    .withFailureHandler(function(e) {
+      document.getElementById("last-update").textContent = "Gagal memuat";
+      console.error(e);
+    })
+    .getDashboardData();
+}
+
+// ── KPI ─────────────────────────────────────────────────────
+function renderKPI(curr, master) {
+  var total = curr.length;
+  var low   = curr.filter(function(r) { return r[6] === "LOW"; }).length;
+  var empty = curr.filter(function(r) { return r[6] === "EMPTY"; }).length;
+
+  var value = 0;
+  curr.forEach(function(r) {
+    var kode = r[0];
+    var stok = Number(r[4]) || 0;
+    var m    = master.find(function(mr) { return mr[3] === kode; });
+    if (m) value += stok * (Number(m[7]) || 0);
+  });
+
+  document.getElementById("kpi-total").textContent = total;
+  document.getElementById("kpi-value").textContent = "Rp " + Math.round(value / 1000).toLocaleString("id-ID") + "K";
+  document.getElementById("kpi-low").textContent   = low;
+  document.getElementById("kpi-empty").textContent = empty;
+
+  if (low + empty > 0) document.getElementById("alert-badge").style.display = "inline-block";
+}
+
+// ── STOCK TABLE ──────────────────────────────────────────────
+function renderStockTable(curr) {
+  if (!curr.length) {
+    document.getElementById("stock-table-wrap").innerHTML = '<div class="loading">Belum ada data stok.</div>';
+    return;
+  }
+  var sorted = curr.slice().sort(function(a, b) {
+    var order = { EMPTY: 0, LOW: 1, OK: 2 };
+    return (order[a[6]] || 2) - (order[b[6]] || 2);
+  });
+
+  var html = '<table><thead><tr>' +
+    '<th>Kode</th><th>Nama Item</th><th>Kategori</th>' +
+    '<th>Stok</th><th>Min</th><th>Status</th><th>Level</th>' +
+    '</tr></thead><tbody>';
+
+  sorted.forEach(function(r) {
+    var status = r[6] || "OK";
+    var stok   = Number(r[4]) || 0;
+    var minStok= Number(r[5]) || 1;
+    var pct    = Math.min(100, Math.round((stok / (minStok * 2)) * 100));
+    var barClass = status === "OK" ? "" : status === "LOW" ? " low" : " empty";
+    var alertClass = (status === "EMPTY" || status === "LOW") ? ' class="alert-row"' : "";
+    var badgeClass = status === "OK" ? "ok" : status === "LOW" ? "low" : "empty";
+
+    html += '<tr' + alertClass + '>' +
+      '<td><code>' + (r[0]||"-") + '</code></td>' +
+      '<td>' + (r[1]||"-") + '</td>' +
+      '<td>' + (r[2]||"-") + '</td>' +
+      '<td><strong>' + stok + '</strong> ' + (r[3]||"") + '</td>' +
+      '<td>' + minStok + '</td>' +
+      '<td><span class="badge ' + badgeClass + '">' + status + '</span></td>' +
+      '<td><div class="stock-bar-wrap"><div class="stock-bar' + barClass + '" style="width:' + pct + '%"></div></div></td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById("stock-table-wrap").innerHTML = html;
+}
+
+// ── TRANSACTIONS ─────────────────────────────────────────────
+function renderTransactions(stockIn, stockOut) {
+  var txs = [];
+  stockIn.forEach(function(r) {
+    txs.push({ ts: new Date(r[0]), type: "in",  kode: r[4], nama: r[5], qty: r[6], pic: r[8], tanggal: r[3] });
+  });
+  stockOut.forEach(function(r) {
+    txs.push({ ts: new Date(r[0]), type: "out", kode: r[4], nama: r[5], qty: r[6], pic: r[8], tanggal: r[3] });
+  });
+  txs.sort(function(a, b) { return b.ts - a.ts; });
+  var recent = txs.slice(0, 20);
+
+  if (!recent.length) {
+    document.getElementById("tx-list").innerHTML = '<div class="loading">Belum ada transaksi.</div>';
+    return;
+  }
+
+  var html = "";
+  recent.forEach(function(t) {
+    var sign  = t.type === "in" ? "+" : "-";
+    var label = t.type === "in" ? "Masuk" : "Keluar";
+    html += '<div class="tx-item">' +
+      '<div class="tx-dot ' + t.type + '"></div>' +
+      '<div class="tx-info">' +
+        '<div class="tx-name">' + (t.nama || t.kode) + '</div>' +
+        '<div class="tx-meta">' + label + ' &bull; ' + (t.tanggal || "") + ' &bull; ' + (t.pic || "") + '</div>' +
+      '</div>' +
+      '<div class="tx-qty ' + t.type + '">' + sign + t.qty + '</div>' +
+      '</div>';
+  });
+  document.getElementById("tx-list").innerHTML = html;
+}
+
+// ── CHART: STOK PER KATEGORI ─────────────────────────────────
+function renderChartKategori(curr) {
+  var map = {};
+  curr.forEach(function(r) {
+    var kat  = r[2] || "Lainnya";
+    var stok = Number(r[4]) || 0;
+    map[kat] = (map[kat] || 0) + stok;
+  });
+  var labels = Object.keys(map);
+  var data   = labels.map(function(k) { return map[k]; });
+
+  var colors = ["#378ADD","#639922","#EF9F27","#E24B4A","#D4537E","#1D9E75","#7F77DD","#D85A30"];
+
+  var ctx = document.getElementById("chartKategori");
+  if (chartKat) chartKat.destroy();
+  chartKat = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: labels,
+      datasets: [{ label: "Total Stok", data: data, backgroundColor: colors.slice(0, labels.length), borderRadius: 4 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+        y: { grid: { color: "#f0f0f0" }, ticks: { font: { size: 11 } } }
+      }
+    }
+  });
+}
+
+// ── CHART: TREND 7 HARI ──────────────────────────────────────
+function renderChartTrend(stockIn, stockOut) {
+  var days = [];
+  for (var i = 6; i >= 0; i--) {
+    var d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(d.toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit" }));
+  }
+
+  function countByDay(rows) {
+    var map = {};
+    rows.forEach(function(r) {
+      var ts   = new Date(r[0]);
+      var key  = ts.toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit" });
+      map[key] = (map[key] || 0) + (Number(r[6]) || 0);
+    });
+    return days.map(function(d) { return map[d] || 0; });
+  }
+
+  var ctx = document.getElementById("chartTrend");
+  if (chartTrend) chartTrend.destroy();
+  chartTrend = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: days,
+      datasets: [
+        {
+          label: "Stock In",
+          data: countByDay(stockIn),
+          borderColor: "#639922", backgroundColor: "rgba(99,153,34,0.08)",
+          borderWidth: 2, pointRadius: 3, fill: true, tension: 0.3
+        },
+        {
+          label: "Stock Out",
+          data: countByDay(stockOut),
+          borderColor: "#E24B4A", backgroundColor: "rgba(226,75,74,0.08)",
+          borderWidth: 2, pointRadius: 3, fill: true, tension: 0.3,
+          borderDash: [4, 4]
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: "top", labels: { font: { size: 11 }, boxWidth: 10 } } },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+        y: { grid: { color: "#f0f0f0" }, ticks: { font: { size: 11 }, stepSize: 1 }, beginAtZero: true }
+      }
+    }
+  });
+}
+
+loadAll();
+setInterval(loadAll, 60000);
+</script>
+</body>
+</html>
