@@ -1,0 +1,396 @@
+// ============================================================
+// SWAPANTAU AIR - Spare Part Inventory Bot (Google Apps Script)
+// ============================================================
+
+var TOKEN     = "8715951835:AAHV0eLC5PxEikNzPWK8L5YV74yQiAZR4us";
+var WEBAPP    = "https://script.google.com/macros/s/AKfycbx5aNJ-Z80viq0_wuSPg8oIHaL2cIXup58-U_i8pvH-pHffn5aM_ba7xZuiGnCYwpLe9A/exec";
+var SS_ID     = "1udAug90tsFbIc2nUmIVDvzOw82h-7Q6S6lqciEqxPH4";
+var ADMIN_ID  = "2047148660";
+
+var TG = "https://api.telegram.org/bot" + TOKEN;
+
+// ── Sheet names ──────────────────────────────────────────────
+var SH_MASTER  = "MASTER_ITEM";
+var SH_IN      = "STOCK_IN";
+var SH_OUT     = "STOCK_OUT";
+var SH_CURRENT = "CURRENT_STOCK";
+
+// ── Required keys per command ────────────────────────────────
+var KEYS_ADDITEM  = ["kodeitem","namaitem","kategori","satuan","harga","minstok"];
+var KEYS_STOCKIN  = ["kodeitem","jumlah","supplier","tanggal","namapic"];
+var KEYS_STOCKOUT = ["kodeitem","jumlah","digunakan","tanggal","namapic"];
+
+// ============================================================
+// WEBHOOK SETUP HELPERS
+// ============================================================
+function setWebhook()     { fetch_(TG + "/setWebhook?url=" + WEBAPP); }
+function getMe()          { fetch_(TG + "/getMe"); }
+function getWebhookInfo() { fetch_(TG + "/getWebhookInfo"); }
+
+// ============================================================
+// MAIN ENTRY POINT
+// ============================================================
+function doPost(e) {
+  try {
+    var data       = JSON.parse(e.postData.contents);
+    var msg        = data.message;
+    var text       = (msg.text || "").trim();
+    var id         = msg.chat.id;
+    var message_id = msg.message_id;
+    var name       = (msg.from.first_name || "") + " " + (msg.from.last_name || "");
+
+    var ss      = SpreadsheetApp.openById(SS_ID);
+    var master  = ss.getSheetByName(SH_MASTER);
+    var shIn    = ss.getSheetByName(SH_IN);
+    var shOut   = ss.getSheetByName(SH_OUT);
+    var shCurr  = ss.getSheetByName(SH_CURRENT);
+
+    var answer   = "";
+    var keyboard = [];
+
+    if (!/^\//.test(text)) {
+      sendReply(id, message_id, "Gunakan perintah yang tersedia. Ketik /start untuk bantuan.", []);
+      return;
+    }
+
+    // ── /start ───────────────────────────────────────────────
+    if (/^\/start/.test(text)) {
+      answer  = "🔧 <b>SWAPANTAU Inventory Bot</b>\n\n";
+      answer += "Selamat datang, <b>" + name + "</b>!\n\n";
+      answer += "<b>Perintah tersedia:</b>\n";
+      answer += "/start         → Menu utama\n";
+      answer += "/c_additem     → Contoh tambah item baru\n";
+      answer += "/c_stockin     → Contoh barang masuk\n";
+      answer += "/c_stockout    → Contoh barang keluar\n";
+      answer += "/cekstok [kode]→ Cek stok item\n";
+      answer += "/listsemua     → Lihat semua item\n\n";
+      answer += "<b>Input data:</b>\n";
+      answer += "/additem       → Tambah master item\n";
+      answer += "/stockin       → Catat barang masuk\n";
+      answer += "/stockout      → Catat barang keluar\n";
+
+      keyboard = [[
+        { text: "/start" }, { text: "/c_additem" }, { text: "/c_stockin" },
+        { text: "/c_stockout" }, { text: "/listsemua" }
+      ]];
+    }
+
+    // ── CONTOH FORMAT ────────────────────────────────────────
+    else if (/^\/c_additem/.test(text)) {
+      answer  = "/additem :\n";
+      answer += "Kode Item : SP-001\n";
+      answer += "Nama Item : Bearing 6205\n";
+      answer += "Kategori : Bearing\n";
+      answer += "Satuan : pcs\n";
+      answer += "Harga : 75000\n";
+      answer += "Min Stok : 5\n";
+    }
+    else if (/^\/c_stockin/.test(text)) {
+      answer  = "/stockin :\n";
+      answer += "Kode Item : SP-001\n";
+      answer += "Jumlah : 10\n";
+      answer += "Supplier : PT. Maju Jaya\n";
+      answer += "Tanggal : 19/04/2025\n";
+      answer += "Nama PIC : AISYU\n";
+    }
+    else if (/^\/c_stockout/.test(text)) {
+      answer  = "/stockout :\n";
+      answer += "Kode Item : SP-001\n";
+      answer += "Jumlah : 2\n";
+      answer += "Digunakan : WTP Kabo\n";
+      answer += "Tanggal : 19/04/2025\n";
+      answer += "Nama PIC : AISYU\n";
+    }
+
+    // ── /additem ─────────────────────────────────────────────
+    else if (/^\/additem/.test(text)) {
+      var d    = parse(text);
+      var chk  = checkKeys(d, KEYS_ADDITEM);
+      if (!chk[0]) { answer = "❌ Field tidak lengkap: " + chk[1]; }
+      else {
+        var kode = d.kodeitem.toUpperCase();
+        if (findRow(master, kode)) {
+          answer = "⚠️ Kode item <b>" + kode + "</b> sudah terdaftar.";
+        } else {
+          master.appendRow([new Date(), id, name, kode, d.namaitem, d.kategori, d.satuan, Number(d.harga), Number(d.minstok)]);
+          // Init current stock row
+          shCurr.appendRow([kode, d.namaitem, d.kategori, d.satuan, 0, Number(d.minstok), "EMPTY"]);
+          answer = "✅ Item <b>" + d.namaitem + "</b> (" + kode + ") berhasil ditambahkan.\nStok awal: 0 " + d.satuan;
+        }
+      }
+    }
+
+    // ── /stockin ─────────────────────────────────────────────
+    else if (/^\/stockin/.test(text)) {
+      var d   = parse(text);
+      var chk = checkKeys(d, KEYS_STOCKIN);
+      if (!chk[0]) { answer = "❌ Field tidak lengkap: " + chk[1]; }
+      else {
+        var kode = d.kodeitem.toUpperCase();
+        var row  = findRow(master, kode);
+        if (!row) {
+          answer = "⚠️ Kode item <b>" + kode + "</b> tidak ditemukan. Daftarkan dulu dengan /additem";
+        } else {
+          var qty = Number(d.jumlah);
+          shIn.appendRow([new Date(), id, name, d.tanggal, kode, getItemName(master, kode), qty, d.supplier, d.namapic]);
+          updateCurrentStock(shCurr, kode, qty, "IN", master);
+          var curr = getCurrentStock(shCurr, kode);
+          answer = "✅ <b>Stock In</b> berhasil dicatat!\n";
+          answer += "Item : " + getItemName(master, kode) + "\n";
+          answer += "Jumlah masuk : +" + qty + "\n";
+          answer += "Stok sekarang : " + curr;
+        }
+      }
+    }
+
+    // ── /stockout ────────────────────────────────────────────
+    else if (/^\/stockout/.test(text)) {
+      var d   = parse(text);
+      var chk = checkKeys(d, KEYS_STOCKOUT);
+      if (!chk[0]) { answer = "❌ Field tidak lengkap: " + chk[1]; }
+      else {
+        var kode = d.kodeitem.toUpperCase();
+        var row  = findRow(master, kode);
+        if (!row) {
+          answer = "⚠️ Kode item <b>" + kode + "</b> tidak ditemukan.";
+        } else {
+          var qty  = Number(d.jumlah);
+          var curr = getCurrentStock(shCurr, kode);
+          if (curr < qty) {
+            answer = "⚠️ Stok tidak cukup! Stok tersedia: " + curr;
+          } else {
+            shOut.appendRow([new Date(), id, name, d.tanggal, kode, getItemName(master, kode), qty, d.digunakan, d.namapic]);
+            updateCurrentStock(shCurr, kode, qty, "OUT", master);
+            var newCurr = getCurrentStock(shCurr, kode);
+            answer = "✅ <b>Stock Out</b> berhasil dicatat!\n";
+            answer += "Item : " + getItemName(master, kode) + "\n";
+            answer += "Jumlah keluar : -" + qty + "\n";
+            answer += "Stok sekarang : " + newCurr;
+            if (newCurr <= getMinStock(master, kode)) {
+              answer += "\n\n⚠️ <b>STOK RENDAH!</b> Segera lakukan pemesanan.";
+            }
+          }
+        }
+      }
+    }
+
+    // ── /cekstok ─────────────────────────────────────────────
+    else if (/^\/cekstok/.test(text)) {
+      var parts = text.trim().split(/\s+/);
+      if (parts.length < 2) {
+        answer = "Format: /cekstok KODE-ITEM\nContoh: /cekstok SP-001";
+      } else {
+        var kode = parts[1].toUpperCase();
+        var currRow = findRowSheet(shCurr, kode);
+        if (!currRow) {
+          answer = "⚠️ Kode item <b>" + kode + "</b> tidak ditemukan.";
+        } else {
+          var vals   = shCurr.getRange(currRow, 1, 1, 7).getValues()[0];
+          var status = vals[6];
+          var emoji  = status === "OK" ? "🟢" : status === "LOW" ? "🟡" : "🔴";
+          answer  = "📦 <b>Info Stok</b>\n\n";
+          answer += "Kode     : " + vals[0] + "\n";
+          answer += "Item     : " + vals[1] + "\n";
+          answer += "Kategori : " + vals[2] + "\n";
+          answer += "Satuan   : " + vals[3] + "\n";
+          answer += "Stok     : " + vals[4] + "\n";
+          answer += "Min Stok : " + vals[5] + "\n";
+          answer += "Status   : " + emoji + " " + status;
+        }
+      }
+    }
+
+    // ── /listsemua ───────────────────────────────────────────
+    else if (/^\/listsemua/.test(text)) {
+      var data  = shCurr.getDataRange().getValues();
+      if (data.length <= 1) {
+        answer = "Belum ada item terdaftar.";
+      } else {
+        answer = "📋 <b>Daftar Item</b>\n\n";
+        for (var i = 1; i < data.length; i++) {
+          var r      = data[i];
+          var emoji  = r[6] === "OK" ? "🟢" : r[6] === "LOW" ? "🟡" : "🔴";
+          answer += emoji + " <b>" + r[0] + "</b> - " + r[1] + "\n";
+          answer += "   Stok: " + r[4] + " " + r[3] + " | Min: " + r[5] + "\n\n";
+        }
+      }
+    }
+
+    else {
+      answer = "Perintah tidak dikenali. Ketik /start untuk menu.";
+    }
+
+    sendReply(id, message_id, answer, keyboard);
+
+  } catch(err) {
+    sendText(ADMIN_ID, "❌ ERROR:\n" + JSON.stringify(err, null, 2));
+  }
+}
+
+// ============================================================
+// SHEET HELPERS
+// ============================================================
+
+function findRow(sheet, kode) {
+  var vals = sheet.getDataRange().getValues();
+  for (var i = 1; i < vals.length; i++) {
+    if (String(vals[i][3]).toUpperCase() === kode) return i + 1;
+  }
+  return null;
+}
+
+function findRowSheet(sheet, kode) {
+  var vals = sheet.getDataRange().getValues();
+  for (var i = 1; i < vals.length; i++) {
+    if (String(vals[i][0]).toUpperCase() === kode) return i + 1;
+  }
+  return null;
+}
+
+function getItemName(master, kode) {
+  var row = findRow(master, kode);
+  if (!row) return kode;
+  return master.getRange(row, 5).getValue(); // col E = namaitem
+}
+
+function getMinStock(master, kode) {
+  var row = findRow(master, kode);
+  if (!row) return 0;
+  return Number(master.getRange(row, 9).getValue()); // col I = minstok
+}
+
+function getCurrentStock(shCurr, kode) {
+  var row = findRowSheet(shCurr, kode);
+  if (!row) return 0;
+  return Number(shCurr.getRange(row, 5).getValue()); // col E = stok
+}
+
+function updateCurrentStock(shCurr, kode, qty, type, master) {
+  var row = findRowSheet(shCurr, kode);
+  if (!row) return;
+  var curr    = Number(shCurr.getRange(row, 5).getValue());
+  var minStok = getMinStock(master, kode);
+  var newQty  = type === "IN" ? curr + qty : curr - qty;
+  var status  = newQty <= 0 ? "EMPTY" : newQty <= minStok ? "LOW" : "OK";
+  shCurr.getRange(row, 5).setValue(newQty);
+  shCurr.getRange(row, 7).setValue(status);
+}
+
+// ============================================================
+// PARSER
+// ============================================================
+
+function parse(text) {
+  var out   = "{";
+  var lines = text.slice(text.indexOf("\n") + 1).split("\n");
+  for (var i = 0; i < lines.length; i++) {
+    var colon = lines[i].indexOf(":");
+    if (colon < 0) continue;
+    var key = lines[i].slice(0, colon).trim().toLowerCase().replace(/\s+/g, "");
+    var val = lines[i].slice(colon + 1).trim().replace(/"/g, '\\"');
+    if (i > 0) out += ",";
+    out += '"' + key + '":"' + val + '"';
+  }
+  out += "}";
+  try { return JSON.parse(out); } catch(e) { return {}; }
+}
+
+function checkKeys(obj, keys) {
+  var missing = [];
+  for (var i = 0; i < keys.length; i++) {
+    if (!obj.hasOwnProperty(keys[i]) || obj[keys[i]] === "") missing.push(keys[i]);
+  }
+  return missing.length === 0 ? [true, ""] : [false, missing.join(", ")];
+}
+
+// ============================================================
+// TELEGRAM SENDERS
+// ============================================================
+
+function sendReply(id, message_id, text, keyboard) {
+  var payload = {
+    parse_mode          : "HTML",
+    chat_id             : id,
+    text                : text,
+    reply_to_message_id : message_id,
+    reply_markup        : {
+      resize_keyboard : true,
+      selective       : true,
+      keyboard        : keyboard
+    }
+  };
+  fetch_(TG + "/sendMessage", payload);
+}
+
+function sendText(id, text) {
+  var payload = { chat_id: id, text: text, parse_mode: "HTML" };
+  fetch_(TG + "/sendMessage", payload);
+}
+
+function fetch_(url, payload) {
+  var opts = payload
+    ? { method: "post", contentType: "application/json", payload: JSON.stringify(payload) }
+    : { method: "get" };
+  var res = UrlFetchApp.fetch(url, opts);
+  Logger.log(res.getContentText());
+  return res;
+}
+
+// ============================================================
+// SHEET INITIALIZER — run once manually
+// ============================================================
+function initSheets() {
+  var ss = SpreadsheetApp.openById(SS_ID);
+
+  var sheets = [
+    { name: SH_MASTER,  headers: ["Timestamp","TG_ID","TG_Name","Kode Item","Nama Item","Kategori","Satuan","Harga","Min Stok"] },
+    { name: SH_IN,      headers: ["Timestamp","TG_ID","TG_Name","Tanggal","Kode Item","Nama Item","Jumlah","Supplier","PIC"] },
+    { name: SH_OUT,     headers: ["Timestamp","TG_ID","TG_Name","Tanggal","Kode Item","Nama Item","Jumlah","Digunakan Oleh","PIC"] },
+    { name: SH_CURRENT, headers: ["Kode Item","Nama Item","Kategori","Satuan","Stok","Min Stok","Status"] },
+  ];
+
+  sheets.forEach(function(s) {
+    var sh = ss.getSheetByName(s.name);
+    if (!sh) sh = ss.insertSheet(s.name);
+    sh.getRange(1, 1, 1, s.headers.length).setValues([s.headers]).setFontWeight("bold");
+  });
+
+  Logger.log("Sheets initialized.");
+}
+
+// ============================================================
+// SERVER-SIDE DATA FUNCTIONS (add these to your Code.gs)
+// Called by google.script.run from the dashboard HTML
+// ============================================================
+
+function getDashboardData() {
+  var ss      = SpreadsheetApp.openById(SS_ID);
+  var curr    = sheetToArray(ss.getSheetByName(SH_CURRENT));
+  var stockIn = sheetToArray(ss.getSheetByName(SH_IN));
+  var stockOut= sheetToArray(ss.getSheetByName(SH_OUT));
+  var master  = sheetToArray(ss.getSheetByName(SH_MASTER));
+
+  return JSON.stringify({
+    current : curr,
+    stockIn : stockIn,
+    stockOut: stockOut,
+    master  : master
+  });
+}
+
+function sheetToArray(sheet) {
+  if (!sheet) return [];
+  var vals = sheet.getDataRange().getValues();
+  if (vals.length <= 1) return [];
+  return vals.slice(1).map(function(row) {
+    return row.map(function(cell) {
+      return cell instanceof Date ? cell.toISOString() : String(cell);
+    });
+  });
+}
+
+function doGet() {
+  return HtmlService.createHtmlOutputFromFile('Index')
+    .setTitle('SWAPANTAU Inventory')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
